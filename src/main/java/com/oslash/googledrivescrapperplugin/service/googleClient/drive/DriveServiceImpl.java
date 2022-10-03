@@ -1,16 +1,20 @@
 package com.oslash.googledrivescrapperplugin.service.googleClient.drive;
 
 import com.google.api.client.auth.oauth2.Credential;
+import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.services.drive.Drive;
+import com.google.api.services.drive.model.Channel;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 import com.oslash.googledrivescrapperplugin.exception.ElementNotFoundException;
 import com.oslash.googledrivescrapperplugin.exception.MultipleElementFoundException;
 import com.oslash.googledrivescrapperplugin.model.entity.FileStorage;
 import com.oslash.googledrivescrapperplugin.model.entity.UserSession;
+import com.oslash.googledrivescrapperplugin.repository.UserSessionRepository;
 import com.oslash.googledrivescrapperplugin.service.storage.StorageService;
+import com.oslash.googledrivescrapperplugin.util.UUIDUtility;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +28,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -40,6 +45,9 @@ public class DriveServiceImpl implements DriveService {
 
     @Value("${app.data.storage.batch-size:100}")
     private int dataStorageBatchSize;
+
+    @Value("#{'${app.google-services.client.file-event.webhook-host}' + '${app.google-services.client.file-event.webhook-uri}'}")
+    private String eventChangeWebhookUri;
 
     @Autowired
     private StorageService storageService;
@@ -152,6 +160,9 @@ public class DriveServiceImpl implements DriveService {
                             FileStorage fileStorage = storageService.store(userSession, fileItem, actualName, localPath.toFile().getAbsolutePath()
                                     .replace(dataStorageRootPath.toFile().getAbsolutePath(), ""), shouldLog);
 
+                            if (isFolder) {
+                                subscribeChanges(service, credential, fileStorage);
+                            }
                         }
 
                     } catch (IOException ex) {
@@ -200,6 +211,8 @@ public class DriveServiceImpl implements DriveService {
                     } else {
                         rootFileStorage = existingSubfolder.get();
                     }
+
+                    subscribeChanges(service, credential, rootFileStorage);
                 }
             }
 
@@ -209,4 +222,25 @@ public class DriveServiceImpl implements DriveService {
         }
     }
 
+
+    public void subscribeChanges(Drive service, Credential credential, FileStorage rootFileStorage) {
+
+        try {
+            Channel channel = new Channel()
+                    .setId(rootFileStorage.getId() + "+" + UUIDUtility.generate())
+                    .setType("web_hook")
+                    .setKind("api#channel")
+                    .setResourceId(rootFileStorage.getDriveId())
+                    .setPayload(true)
+                    .setAddress(eventChangeWebhookUri);
+
+            service.files().watch(rootFileStorage.getDriveId(), channel)
+                    .setSupportsAllDrives(true)
+                    .execute();
+
+        } catch (IOException ex) {
+
+            throw new RuntimeException(ex);
+        }
+    }
 }
