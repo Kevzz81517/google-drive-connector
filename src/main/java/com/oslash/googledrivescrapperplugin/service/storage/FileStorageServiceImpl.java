@@ -7,6 +7,7 @@ import com.oslash.googledrivescrapperplugin.exception.ElementNotFoundException;
 import com.oslash.googledrivescrapperplugin.model.entity.FileStorage;
 import com.oslash.googledrivescrapperplugin.model.entity.UserSession;
 import com.oslash.googledrivescrapperplugin.repository.FileStorageRepository;
+import com.oslash.googledrivescrapperplugin.util.FileLoggingUtility;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,9 @@ public class FileStorageServiceImpl implements StorageService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Value("${app.google-services.client.file-event-processing.new.log-file-location}")
+    private String logDestination;
+
     @Value("${app.data.storage.root-path:data}")
     private Path dataStorageRootPath;
 
@@ -35,6 +39,12 @@ public class FileStorageServiceImpl implements StorageService {
         createdOn.setTimeInMillis(file.getCreatedTime().getValue());
 
         try {
+            if (shouldLog) {
+                FileLoggingUtility.write(
+                        Path.of(dataStorageRootPath.toFile().getAbsolutePath(), userSession.getUserId() + "-" + logDestination),
+                        this.objectMapper.writeValueAsString(file) + "\n"
+                );
+            }
             return this.fileStorageRepository.save(
                     FileStorage.builder()
                             .name(file.getName())
