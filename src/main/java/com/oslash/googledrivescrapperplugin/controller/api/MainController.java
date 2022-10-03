@@ -6,7 +6,7 @@ import com.oslash.googledrivescrapperplugin.model.entity.UserSession;
 import com.oslash.googledrivescrapperplugin.model.request.ConnectNewRootFolderRequest;
 import com.oslash.googledrivescrapperplugin.service.googleClient.authorization.AuthorizationService;
 import com.oslash.googledrivescrapperplugin.service.googleClient.credential.CredentialService;
-import com.oslash.googledrivescrapperplugin.service.googleClient.drive.DriveServiceImpl;
+import com.oslash.googledrivescrapperplugin.service.googleClient.drive.DriveService;
 import com.oslash.googledrivescrapperplugin.service.storage.StorageService;
 import com.oslash.googledrivescrapperplugin.service.user.UserSessionService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,8 +24,14 @@ public class MainController {
     @Autowired
     private UserSessionService userSessionService;
 
+    @Autowired
+    private CredentialService credentialService;
 
+    @Autowired
+    private DriveService driveService;
 
+    @Autowired
+    private StorageService storageService;
 
     /**
      * Generated the authorization link where user can authorize application to use Google Apis
@@ -45,7 +51,7 @@ public class MainController {
     /**
      * Google will redirect user to this redirection link
      *
-     * @param code Provided by Google to get the Token
+     * @param code  Provided by Google to get the Token
      * @param scope Scopes authorized by the user
      * @param state JWT encoded details required to uniquely identify the user (Sent with the link)
      */
@@ -57,5 +63,22 @@ public class MainController {
         this.userSessionService.upsert(userTokens.userId(), userTokens.accessToken(), userTokens.refreshToken());
     }
 
+    /**
+     * @param connectNewRootFolderRequest userId
+     *                                    Uniquely identify the user
+     *                                    rootFolder
+     *                                    Name of the Root folder to be connected to the connector
+     *                                    <p>
+     *                                    Returns 200 OK if the Folder gets connected successfully
+     *                                    Returns 409 CONFLICT if the Folder is already connected
+     *                                    Returns 409 CONFLICT if multiple folders with the same name exists
+     */
+    @PostMapping("/connect/user/root")
+    public void connectFolder(@RequestBody ConnectNewRootFolderRequest connectNewRootFolderRequest) {
+
+        UserSession userSession = this.userSessionService.get(connectNewRootFolderRequest.userId());
+        Credential credential = this.credentialService.getCredential(userSession.getAccessToken(), userSession.getRefreshToken());
+        this.driveService.connectRootFolder(credential, userSession, connectNewRootFolderRequest.rootFolder());
+    }
 
 }
