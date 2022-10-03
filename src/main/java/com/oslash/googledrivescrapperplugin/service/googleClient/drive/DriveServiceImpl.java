@@ -40,6 +40,12 @@ public class DriveServiceImpl implements DriveService {
     @Autowired
     private JsonFactory jsonFactory;
 
+    @Autowired
+    private GoogleClientSecrets clientSecrets;
+
+    @Autowired
+    private UserSessionRepository userSessionRepository;
+
     @Value("${app.data.storage.root-path:data1}")
     private Path dataStorageRootPath;
 
@@ -56,6 +62,11 @@ public class DriveServiceImpl implements DriveService {
      * Query template to find the folders with given name
      */
     private static String SEARCH_FOLDER_QUERY = "mimeType='application/vnd.google-apps.folder' and trashed=false and name = '%s'";
+
+    /**
+     * Query template to find the folders from given name list
+     */
+    private static String SEARCH_FOLDERS_BY_NAMES_QUERY = "mimeType='application/vnd.google-apps.folder' and trashed=false and name in %s";
 
     /**
      * Query template to find the files by Parent folder id
@@ -83,6 +94,37 @@ public class DriveServiceImpl implements DriveService {
         }
 
         return listQuery.execute();
+    }
+
+    /**
+     * Get the Folders with provided FileStorages
+     *
+     * @param service
+     * @param fileStorages
+     * @return
+     * @throws IOException
+     */
+    private List<File> findFolders(Drive service, List<FileStorage> fileStorages) throws IOException {
+
+        String nameParameter = "'" + String.join("','",
+                fileStorages.stream().map(fileStorage -> fileStorage.getName()).collect(Collectors.toSet())) + "'";
+
+        String pageToken = null;
+
+        List<File> actualRootFolder = new ArrayList<>();
+
+        do {
+            FileList result = this.queryFiles(service, String.format(SEARCH_FOLDERS_BY_NAMES_QUERY, nameParameter), null);
+            actualRootFolder.addAll(
+                    result.getFiles().stream()
+                            .filter(fileItem -> fileStorages.stream()
+                                    .anyMatch(fileStorage -> fileStorage.getDriveId().equals(fileItem.getId())))
+                            .collect(Collectors.toSet())
+            );
+            pageToken = result.getNextPageToken();
+        } while (pageToken != null);
+
+        return actualRootFolder;
     }
 
     private List<File> findFolders(Drive service, String rootFolder, int pageSize) throws IOException {
@@ -242,5 +284,31 @@ public class DriveServiceImpl implements DriveService {
 
             throw new RuntimeException(ex);
         }
+    }
+
+    @Override
+    public boolean resync(UserSession userSession, Credential credential, List<FileStorage> fileStorages) {
+
+        Drive service = new Drive.Builder(httpTransport, jsonFactory, credential)
+                .setApplicationName("OSlash Drive Connector")
+                .build();
+
+        try {
+
+            List<File> rootFolders = this.findFolders(
+                    service,
+                    fileStorages
+            );
+            rootFolders.stream().parallel().forEach(rootFolder -> {
+                Path path = Path.of(dataStorageRootPath.toFile().getAbsolutePath(), fileStorages.stream().filter(fileStorage -> fileStorage.getDriveId().equals(rootFolder.getId())).findAny().get().getLocalPath());
+                recursiveBackup(userSession, credential, service, rootFolder.getId(), path, dataStorageBatchSize, true);
+            });
+            return true;
+        } catch (IOException ex) {
+
+            log.error(String.format("Error in resyncing for the USER ID " + userSession.getUserId(), ex));
+            return false;
+        }
+
     }
 }
